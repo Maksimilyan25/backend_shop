@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime
 
 
 class CreateProduct(BaseModel):
@@ -22,3 +23,15 @@ class CreateUser(BaseModel):
     username: str
     email: str
     password: str
+
+
+class CreateReview(BaseModel):
+    user_id: int
+    product_id: int
+    comment : str
+    grade: int
+    comment_date: datetime = datetime.now()
+
+
+class DeleteReviewSchema(BaseModel):
+    review_id: int

@@ -19,3 +19,4 @@ class Product(Base):
     category = relationship(
         'Category', back_populates='products', uselist=False)
     supplier_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    reviews = relationship('Review', back_populates='product', uselist=False)

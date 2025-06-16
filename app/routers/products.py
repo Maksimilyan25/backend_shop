@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated
 from slugify import slugify
 
+from app.routers.auth import get_current_user
 from app.backend.db_depends import get_db
 from app.models.products import Product
 from app.models.category import Category
@@ -30,27 +31,34 @@ async def all_products(db: Annotated[AsyncSession, Depends(get_db)]):
 @router.post('/', status_code=status.HTTP_200_OK)
 async def create_product(
      db: Annotated[AsyncSession, Depends(get_db)],
-     create_product: CreateProduct):
-    category = await db.scalar(select(Category).where(
-        Category.id == create_product.category))
-    if category is None:
+     create_product: CreateProduct,
+     get_user: Annotated[dict, Depends(get_current_user)]):
+    if get_user.get('is_admin') or get_user.get('is_supplier'):
+        category = await db.scalar(select(Category).where(
+            Category.id == create_product.category))
+        if category is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail='Категория не найдена')
+
+        await db.execute(insert(Product).values(
+            name=create_product.name,
+            slug=slugify(create_product.name),
+            description=create_product.description,
+            price=create_product.price,
+            image_url=create_product.image_url,
+            stock=create_product.stock,
+            category_id=create_product.category,
+            rating=0.0,
+            supplier_id=get_user.get('id')))
+        await db.commit()
+
+        return {'staus_code': status.HTTP_201_CREATED,
+                'detail': 'Продукт создан!'}
+    else:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail='Категория не найдена')
-
-    await db.execute(insert(Product).values(
-        name=create_product.name,
-        slug=slugify(create_product.name),
-        description=create_product.description,
-        price=create_product.price,
-        image_url=create_product.image_url,
-        stock=create_product.stock,
-        category_id=create_product.category,
-        rating=0.0))
-    await db.commit()
-
-    return {'staus_code': status.HTTP_201_CREATED,
-            'detail': 'Продукт создан!'}
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='У вас нет доступа')
 
 
 @router.get('/{category_slug}')
@@ -88,42 +96,67 @@ async def product_detail(
 @router.put('/{product_slug}')
 async def update_product(
      db: Annotated[AsyncSession, Depends(get_db)],
-     product_slug: str, update_product: CreateProduct):
-    product = await db.scalar(select(Product).where(Product.slug == product_slug))
-    if product is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail='Продукт не найден')
-    category = await db.scalar(select(Category).where(
-        Category.id == update_product.category))
-    if category is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail='Категория не найдена!')
+     product_slug: str,
+     update_product: CreateProduct,
+     get_user: Annotated[dict, Depends(get_current_user)]):
+    if get_user.get('is_admin') or get_user.get('is_supplier'):
+        product = await db.scalar(select(Product).where(Product.slug == product_slug))
+        if product is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail='Продукт не найден')
+        category = await db.scalar(select(Category).where(
+            Category.id == update_product.category))
+        if category is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail='Категория не найдена!')
 
-    product.name = update_product.name
-    product.description = update_product.description
-    product.price = update_product.price
-    product.image_url = update_product.image_url
-    product.slug = slugify(update_product.name)
-    product.stock = update_product.stock
-    product.category_id = update_product.category
-    await db.commit()
+        if get_user.get('id') == product.supplier_id or get_user.get('is_admin'):
+            category = await db.scalar(select(Category).where(
+                Category.id == update_product.category))
+            if category is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail='There is no category found'
+                )
+            product.name = update_product.name
+            product.description = update_product.description
+            product.price = update_product.price
+            product.image_url = update_product.image_url
+            product.stock = update_product.stock
+            product.category_id = update_product.category
+            product.slug = slugify(update_product.name)
 
-    return {'status_code': status.HTTP_200_OK,
-            'detail': 'Продукт успешно обновлен!'}
+            await db.commit()
+
+        return {'status_code': status.HTTP_200_OK,
+                'detail': 'Продукт успешно обновлен!'}
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='У вас нет доступа')
 
 
 @router.delete('/{product_slug}')
 async def delete_product(
-     db: Annotated[AsyncSession, Depends(get_db)], product_slug: str):
-    product = await db.scalar(select(Product).where(
-        Product.slug == product_slug, Product.is_active == True))
-    if product is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail='Продукт не найден')
-    product.is_active = False
-    await db.commit()
+     db: Annotated[AsyncSession, Depends(get_db)],
+     product_slug: str,
+     get_user: Annotated[dict, Depends(get_current_user)]):
+    if get_user.get('is_admin') or get_user.get('is_supplier'):
+        product = await db.scalar(select(Product).where(
+            Product.slug == product_slug, Product.is_active == True))
+        if product is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail='Продукт не найден')
+    if get_user.get('is_supplier') or get_user.get('is_admin'):
+        if get_user.get('id') == product.supplier_id or get_user.get('is_admin'):
+            product.is_active = False
+            await db.commit()
 
-    return {'status_code': status.HTTP_200_OK,
-            'detail': 'Продукт удален'}
+        return {'status_code': status.HTTP_200_OK,
+                'detail': 'Продукт удален'}
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='У вас нет доступа')
